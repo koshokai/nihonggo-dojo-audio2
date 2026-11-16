@@ -1,0 +1,108 @@
+# 中文词典录音：MeloTTS（MIT）普通话 ZH。在 Actions 页面手动运行（公开仓库，Actions 免费，不需要任何 Secret）。
+# 词表 lang/zh-dict.json 从公开仓库 koshokai/nihonggo-dojo 取，按词典里的拼音读（多音字不读错）；
+# 已经有录音的词（主站 audio/index-zh.json、index-zh-human.json）不再生成。安装步骤和主站 melotts.yml 一样。
+# 分 8 片并行；每片到时间（max_minutes）会自己停下并上传已完成的部分，最后一个任务合并、提交。没做完就再运行一次，会接着做。
+# 日志只打印数量。
+name: Dictionary audio - Chinese (MeloTTS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 从 koshokai/nihonggo-dojo 的哪个分支取 lang/zh-dict.json
+        required: false
+        default: main
+      limit:
+        description: 每片最多生成多少个（0 = 全部；试跑时填 5）
+        required: false
+        default: '0'
+      max_minutes:
+        description: 每片最多生成多少分钟（之后上传、合并；GitHub 一个任务最多 6 小时）
+        required: false
+        default: '300'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dict-audio-zh
+  cancel-in-progress: false
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      # 只检出脚本和索引（不下载录音本身）；已有的录音文件列表用 git ls-tree 取
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            /scripts/
+            /index-dict-*.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install MeloTTS
+        timeout-minutes: 20   # 软件源连不上时会一直卡住：20 分钟还没装好就停下，不白白耗掉额度
+        run: |
+          which ffmpeg || (sudo apt-get update -q && sudo apt-get install -yq ffmpeg)
+          pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          git clone -q --depth 1 https://github.com/myshell-ai/MeloTTS "$RUNNER_TEMP/MeloTTS"
+          pip install -q -e "$RUNNER_TEMP/MeloTTS"
+          python -m unidic download
+          python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', quiet=True); nltk.download('cmudict', quiet=True)"
+          git ls-tree -r --name-only HEAD -- zh-d > "$RUNNER_TEMP/have.txt"
+          wc -l < "$RUNNER_TEMP/have.txt"
+      - name: Generate
+        timeout-minutes: 320
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 8
+          SRC_REF: ${{ inputs.ref }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+          OUT_DIR: ${{ runner.temp }}/out
+          HAVE_FILES: ${{ runner.temp }}/have.txt
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          python scripts/gen_zh.py --limit "${LIMIT:-0}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zh-${{ matrix.shard }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 3
+
+  commit:
+    needs: gen
+    if: always() && needs.gen.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # 所有分片都没有结果时不算失败（下面会打印 0）
+        with:
+          pattern: zh-*
+          path: ${{ runner.temp }}/art
+      - name: Merge and commit
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/art"
+          echo "shards with results: $(ls "$RUNNER_TEMP/art" | wc -l)"
+          python3 scripts/merge.py zh "$RUNNER_TEMP/art"
+          git config user.name "dict-audio-bot"
+          git config user.email "dict-audio-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -qm "audio: Chinese dictionary words (MeloTTS)"
+          for i in 1 2 3 4 5; do git pull -q --rebase origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0; sleep $((i * 10)); done
+          exit 1

@@ -1,0 +1,101 @@
+# 日语词典录音：VOICEVOX:春日部つむぎ（style 8）。在 Actions 页面手动运行（公开仓库，Actions 免费，不需要任何 Secret）。
+# 词表 dict.json 从公开仓库 koshokai/nihonggo-dojo 取，现有录音的目录从 GitHub Pages 取（脚本 scripts/common.py），
+# 已经有录音的词（index-words / daily / examples / ja-human / kana）不再生成。
+# 分 8 片并行；每片到时间（max_minutes）会自己停下并上传已完成的部分，最后一个任务合并、提交。没做完就再运行一次，会接着做。
+# 日志只打印数量。引擎自己用 docker 启动并关掉日志：作为 service 容器时，任务结束会把访问日志（URL 里带文字）打印出来。
+name: Dictionary audio - Japanese (VOICEVOX)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 从 koshokai/nihonggo-dojo 的哪个分支取 dict.json
+        required: false
+        default: main
+      limit:
+        description: 每片最多生成多少个（0 = 全部；试跑时填 5）
+        required: false
+        default: '0'
+      max_minutes:
+        description: 每片最多生成多少分钟（之后上传、合并；GitHub 一个任务最多 6 小时）
+        required: false
+        default: '300'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dict-audio-ja
+  cancel-in-progress: false
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      # 只检出脚本和索引（不下载录音本身）；已有的录音文件列表用 git ls-tree 取
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            /scripts/
+            /index-dict-*.json
+          sparse-checkout-cone-mode: false
+      - name: Engine and tools
+        run: |
+          docker run -d --name voicevox --log-driver none -p 50021:50021 voicevox/voicevox_engine:cpu-latest > /dev/null
+          which ffmpeg || (sudo apt-get update -q && sudo apt-get install -yq ffmpeg)
+          git ls-tree -r --name-only HEAD -- ja-d > "$RUNNER_TEMP/have.txt"
+          wc -l < "$RUNNER_TEMP/have.txt"
+      - name: Generate
+        timeout-minutes: 320
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 8
+          SRC_REF: ${{ inputs.ref }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+          OUT_DIR: ${{ runner.temp }}/out
+          HAVE_FILES: ${{ runner.temp }}/have.txt
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          for i in $(seq 100); do curl -sf http://127.0.0.1:50021/version >/dev/null && break; sleep 3; done
+          python3 scripts/gen_ja.py --limit "${LIMIT:-0}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ja-${{ matrix.shard }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 3
+
+  commit:
+    needs: gen
+    if: always() && needs.gen.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # 所有分片都没有结果时不算失败（下面会打印 0）
+        with:
+          pattern: ja-*
+          path: ${{ runner.temp }}/art
+      - name: Merge and commit
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/art"
+          echo "shards with results: $(ls "$RUNNER_TEMP/art" | wc -l)"
+          python3 scripts/merge.py ja "$RUNNER_TEMP/art"
+          git config user.name "dict-audio-bot"
+          git config user.email "dict-audio-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -qm "audio: Japanese dictionary words (VOICEVOX:春日部つむぎ)"
+          for i in 1 2 3 4 5; do git pull -q --rebase origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0; sleep $((i * 10)); done
+          exit 1
