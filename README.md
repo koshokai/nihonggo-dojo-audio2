@@ -6,7 +6,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `ja-d/*.mp3`、`index-dict-ja.json` | 日语词典（`dict.json`，JMdict 常用词）里没有录音的词，VOICEVOX:春日部つむぎ |
-| `zh-d/*.mp3`、`index-dict-zh.json` | 中文词典（`lang/zh-dict.json`）里没有录音的词，MeloTTS 普通话 |
+| `zh-d/*.mp3`、`index-dict-zh.json` | 中文词典（`lang/zh-dict.json`）里没有录音的词，MeloTTS 普通话（MeloTTS 读不出声音的少数词用 Kokoro 普通话女声补） |
 | `en-d/*.mp3`、`index-dict-en.json` | 英语词典（`lang/en-dict.json`）里没有录音的词，Kokoro af_heart |
 
 索引是 `key → 相对路径`，例如 `"とくべつかかく": "ja-d/0a1b2c3d4e5f6789.mp3"`。文件名是 key 的 sha1 前 16 位。
@@ -83,7 +83,7 @@ python3 scripts/gen_ja.py --dry-run        # zh、en 同样；离线时加 --sit
 | 语言 | 引擎和设置（和网站现有录音一样） |
 | --- | --- |
 | 日语 | VOICEVOX engine（`voicevox/voicevox_engine:cpu-latest`），style 8 春日部つむぎ；先用写法合成，读出的假名和词典读音不一样时改用读音；两拍以内的词元音不清音化；统一响度（有声部分 −21.5 dB）；40 kbps |
-| 中文 | MeloTTS ZH；按词典里的拼音读（替换 MeloTTS 的 `lazy_pinyin`，儿化保留）；读不出声音时换几种读法重试；统一响度；48 kbps |
+| 中文 | MeloTTS ZH；按词典里的拼音读（替换 MeloTTS 的 `lazy_pinyin`，儿化保留）；读不出声音时换几种读法重试；统一响度；48 kbps。还是读不出来的词：`engine: kokoro` 用 Kokoro-82M `zf_xiaoxiao`（`scripts/gen_zh_kokoro.py`，同样按词典拼音、同样的响度） |
 | 英语 | Kokoro-82M `af_heart`，单词语速 0.9；`loudnorm` 统一响度；44.1 kHz、48 kbps |
 
 ## 大小
@@ -94,6 +94,6 @@ GitHub Pages 一个网站最多 1 GB。按现有录音的平均大小（日语�
 ## 致谢和授权
 
 - 日语录音：**VOICEVOX:春日部つむぎ**（https://voicevox.hiroshiba.jp/ 、https://tsukushinyoki10.wixsite.com/ktsumugiofficial ）。使用时请注明「VOICEVOX:春日部つむぎ」，并遵守角色的使用规定。
-- 中文录音：**MeloTTS**（MyShell.ai，MIT License，https://github.com/myshell-ai/MeloTTS ）。
+- 中文录音：**MeloTTS**（MyShell.ai，MIT License，https://github.com/myshell-ai/MeloTTS ）；少数词用 **Kokoro-82M**（hexgrad，Apache License 2.0），声音 zf_xiaoxiao。
 - 英语录音：**Kokoro-82M**（hexgrad，Apache License 2.0，https://huggingface.co/hexgrad/Kokoro-82M ），声音 af_heart。
 - 日语词表来自 JMdict（Electronic Dictionary Research and Development Group，CC BY-SA 4.0），经猫先生整理；中文、英语词表由猫先生编写。

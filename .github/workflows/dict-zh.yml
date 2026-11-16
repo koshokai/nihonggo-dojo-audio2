@@ -3,6 +3,7 @@
 # 已经有录音的词（主站 audio/index-zh.json、index-zh-human.json）不再生成。安装步骤和主站 melotts.yml 一样。
 # 分 8 片并行；每片到时间（max_minutes）会自己停下并上传已完成的部分，最后一个任务合并、提交。没做完就再运行一次，会接着做。
 # 日志只打印数量。
+# engine = kokoro：MeloTTS 几种读法都没读出声音的词（没有文件的），用 Kokoro-82M 普通话女声补上（scripts/gen_zh_kokoro.py，words 填词或 all）。
 name: Dictionary audio - Chinese (MeloTTS)
 
 on:
@@ -20,6 +21,15 @@ on:
         description: 每片最多生成多少分钟（之后上传、合并；GitHub 一个任务最多 6 小时）
         required: false
         default: '300'
+      engine:
+        description: melotts（默认，8 片）/ kokoro（只补 MeloTTS 读不出来的词）
+        type: choice
+        options: [melotts, kokoro]
+        default: melotts
+      words:
+        description: 只用于 kokoro：要补的词（空格分开），或 all = 所有还没有录音的词（先让 MeloTTS 跑完）
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -30,6 +40,7 @@ concurrency:
 
 jobs:
   gen:
+    if: inputs.engine != 'kokoro'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
@@ -79,9 +90,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+  kokoro:
+    if: inputs.engine == 'kokoro'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            /scripts/
+            /index-dict-*.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Kokoro（普通话：misaki[zh]）
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq espeak-ng ffmpeg
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q "kokoro>=0.9" "misaki[zh]" soundfile numpy
+          git ls-tree -r --name-only HEAD -- zh-d > "$RUNNER_TEMP/have.txt"
+          wc -l < "$RUNNER_TEMP/have.txt"
+      - name: Generate
+        env:
+          SRC_REF: ${{ inputs.ref }}
+          OUT_DIR: ${{ runner.temp }}/out
+          HAVE_FILES: ${{ runner.temp }}/have.txt
+          WORDS: ${{ inputs.words }}
+        run: python scripts/gen_zh_kokoro.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zh-kokoro
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 3
+
   commit:
-    needs: gen
-    if: always() && needs.gen.result != 'cancelled'
+    needs: [gen, kokoro]
+    if: always() && needs.gen.result != 'cancelled' && needs.kokoro.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -103,6 +152,6 @@ jobs:
           git config user.email "dict-audio-bot@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && exit 0
-          git commit -qm "audio: Chinese dictionary words (MeloTTS)"
+          git commit -qm "audio: Chinese dictionary words (${{ inputs.engine == 'kokoro' && 'Kokoro fallback' || 'MeloTTS' }})"
           for i in 1 2 3 4 5; do git pull -q --rebase origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0; sleep $((i * 10)); done
           exit 1
