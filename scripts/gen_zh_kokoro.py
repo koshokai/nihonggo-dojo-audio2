@@ -10,6 +10,7 @@ Apache 2.0）的普通话女声补一条。文件名、索引的 key 和 MeloTTS
     python3 scripts/gen_zh_kokoro.py --words all --dry-run              只算数量
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -70,7 +71,12 @@ def main():
     if r is None:
         return
     todo, idx, _need, out = r
-    if a.words.strip() != 'all':
+    if a.words.strip() == 'extra':
+        # scripts/extra-zh.json：网站其他地方（单词、句子）MeloTTS 录出来没有声音的，[[文字, 拼音], …]；网站把这个索引并进中文录音目录
+        extra = json.loads((Path(__file__).parent / 'extra-zh.json').read_text(encoding='utf-8'))
+        todo = [{'key': t, 'text': t, 'py': py or ''} for t, py in extra if t not in idx]
+        print(f'extra: {len(extra)} listed, {len(todo)} still without a recording', flush=True)
+    elif a.words.strip() != 'all':
         want = set(a.words.split())
         todo = [e for e in todo if e['key'] in want]
         print(f'words: {len(want)} asked, {len(todo)} still without a recording', flush=True)
