@@ -24,7 +24,7 @@ from pathlib import Path
 import common
 
 ENGINE = 'http://127.0.0.1:50021'
-SPEAKER = 8           # 春日部つむぎ（ノーマル）：和网站其他日语录音同一个声音
+SPEAKER = 14          # 冥鳴ひまり（ノーマル）：和网站其他日语录音同一个声音
 KBPS = 40
 
 

@@ -49,7 +49,7 @@ jobs:
         run: |
           docker run -d --name voicevox --log-driver none -p 50021:50021 voicevox/voicevox_engine:cpu-latest > /dev/null
           which ffmpeg || (sudo apt-get update -q && sudo apt-get install -yq ffmpeg)
-          git ls-tree -r --name-only HEAD -- ja-d > "$RUNNER_TEMP/have.txt"
+          git ls-tree -r --name-only HEAD -- ja-d2 > "$RUNNER_TEMP/have.txt"
           wc -l < "$RUNNER_TEMP/have.txt"
       - name: Generate
         timeout-minutes: 320

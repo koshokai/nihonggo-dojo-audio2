@@ -27,6 +27,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LANGS = ('ja', 'zh', 'en')
 FOLDER = {lang: f'{lang}-d' for lang in LANGS}          # 录音文件夹 ja-d/ zh-d/ en-d/
+FOLDER['ja'] = 'ja-d2'   # 日语换成冥鳴ひまり：新声音放在新文件夹（文件名只按词算，同名会被当成已经生成过）
 INDEX = {lang: f'index-dict-{lang}.json' for lang in LANGS}
 PART = 'index-dict-{lang}.part.json'                     # 每个分片新生成的部分（合并时用）
 
