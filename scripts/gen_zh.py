@@ -70,6 +70,7 @@ def zh_patch():
                 out.append(to_finals_tone3(py, strict=True, neutral_tone_with_five=True))
         if style == Style.FINALS_TONE3:
             state['pos'] = k + len(word)
+            state['last'] = (k, word)
         return out
 
     mods = []
@@ -83,6 +84,26 @@ def zh_patch():
             m.lazy_pinyin = patched
             mods.append(name)
     print('  pinyin patch:', mods or 'NOT APPLIED', flush=True)
+    # MeloTTS 的轻声规则把词尾的「的、地、得」一律读成轻声（绿地 lǜdi、目的 mùdi）：我们给了非轻声读音的，改回去（和主站 gen_audio_melo.py 一样）
+    try:
+        ch = importlib.import_module('melo.text.chinese')
+        tm = ch.tone_modifier
+        orig_mt = tm.modified_tone
+
+        def modified_tone(word, pos, finals):
+            finals = orig_mt(word, pos, finals)
+            seq, last = state['seq'], state.get('last')
+            if seq and last and last[1] == word:
+                for j, c in enumerate(word):
+                    py = seq[last[0] + j][1] if last[0] + j < len(seq) else ''
+                    if c in '的地得' and py and ZH_VOWEL.search(py) and j < len(finals):
+                        t = to_finals_tone3(py, strict=True, neutral_tone_with_five=True)[-1:]
+                        if t in '1234' and finals[j][-1:] == '5':
+                            finals[j] = finals[j][:-1] + t
+            return finals
+        tm.modified_tone = modified_tone
+    except Exception as e:   # noqa: BLE001
+        print('  tone patch skipped', type(e).__name__)
     return state
 
 
@@ -161,7 +182,7 @@ def synth_zh(model, spk, text, wav, state, seq):
     need = 0.15 if n == 1 else 0.11 * n
     best, tmp = None, wav.with_name('try.wav')
     for name, t, rep, kw in tries:
-        state['seq'], state['pos'] = (seq * rep if seq else None), 0
+        state['seq'], state['pos'], state['last'] = (seq * rep if seq else None), 0, None
         try:
             model.tts_to_file(t, spk, str(tmp), speed=speed, quiet=True, **kw)
         except Exception:
