@@ -32,8 +32,12 @@ def phonemes(text, seq):
     from pypinyin.contrib.tone_convert import to_tone3
     if seq and REPO_ID.rstrip('/').endswith('/Kokoro-82M'):
         try:
-            return ''.join(ZHG2P.py2ipa(to_tone3(p, neutral_tone_with_five=True)) if p and VOWEL.search(p) else ZHG2P.word2ipa(c)
-                           for c, p in seq).replace(chr(815), '')   # 和 misaki legacy_call 一样去掉 U+032F
+            t3 = [to_tone3(p, neutral_tone_with_five=True) if p and VOWEL.search(p) else '' for c, p in seq]
+            for k in range(len(t3) - 1):   # 上声连读变调（小姐 xiáo jiě）：后面紧跟第三声的第三声读第二声
+                if t3[k].endswith('3') and t3[k + 1].endswith('3'):
+                    t3[k] = t3[k][:-1] + '2'
+            return ''.join(ZHG2P.py2ipa(p) if p else ZHG2P.word2ipa(c)
+                           for (c, _), p in zip(seq, t3)).replace(chr(815), '')   # 和 misaki legacy_call 一样去掉 U+032F
         except Exception:   # noqa: BLE001
             pass
     return ZHG2P(version=None if REPO_ID.rstrip('/').endswith('/Kokoro-82M') else '1.1')(text)[0]
