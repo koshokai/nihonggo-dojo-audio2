@@ -1,0 +1,91 @@
+# 中文词典的单字、短词录音：每个词准备几条候选（原来的 MeloTTS 录音 + Kokoro 普通话女声，按词典拼音读），
+# 用语音识别（FunASR Paraformer）逐条听，留下听得最清楚的一条（MeloTTS 读单字、两个字的词常常含糊）。
+# zhshort/stale.json 里的词拼音改过，原来的录音不算候选。脚本在 zhshort/tools/（主站 tools/ 的副本）。
+name: Dictionary audio - Chinese short words (pick the clearest)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dict-zh
+  cancel-in-progress: false
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['0', '1', '2', '3', '4', '5', '6', '7']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /index-dict-zh.json
+            /zh-d/
+            /zhshort/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Kokoro + FunASR
+        timeout-minutes: 25
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq espeak-ng ffmpeg
+          pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -q "kokoro>=0.9" "misaki[zh]" soundfile numpy funasr modelscope cn2an pypinyin
+      - name: Pick
+        run: |
+          mkdir -p out
+          python3 zhshort/tools/gen_zh_short.py run --root . --index index-dict-zh.json --dict zhshort/zh-dict.json --stale zhshort/stale.json --prefix zh-d --shard ${{ matrix.shard }}/8 --out out/part-${{ matrix.shard }}.json
+          mkdir -p out/zh-d && for f in $(python3 -c "import json;d=json.load(open('out/part-${{ matrix.shard }}.json'));print(' '.join(v[0] for v in d.values() if v[1]!='cur'))"); do cp "$f" "out/$f"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: short-${{ matrix.shard }}
+          path: out
+          retention-days: 3
+
+  commit:
+    needs: pick
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /index-dict-zh.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Merge and commit
+        run: |
+          python3 - <<'PY'
+          import json, glob, os, shutil
+          idx = json.load(open('index-dict-zh.json'))
+          rep, n = {}, 0
+          for f in glob.glob('parts/*/part-*.json'):
+              for t, (rel, eng, s) in json.load(open(f)).items():
+                  rep[t] = [eng, s]
+                  if eng != 'cur':
+                      src = glob.glob(f'parts/*/{rel}')
+                      if src:
+                          os.makedirs(os.path.dirname(rel), exist_ok=True)
+                          shutil.copy(src[0], rel)
+                          idx[t] = rel
+                          n += 1
+          json.dump(idx, open('index-dict-zh.json', 'w'), ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+          json.dump(rep, open('short-dict-zh.json', 'w'), ensure_ascii=False, separators=(',', ':'))
+          print('replaced', n, 'of', len(rep), 'still unclear', sum(1 for e, s in rep.values() if s < 0.99))
+          PY
+          git config user.name "dict-zh-bot"
+          git config user.email "dict-zh-bot@users.noreply.github.com"
+          git add --sparse -A index-dict-zh.json short-dict-zh.json zh-d
+          git diff --cached --quiet && exit 0
+          git commit -qm "audio: Chinese dictionary short words - clearest recording"
+          for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0; sleep $((i * 10)); done
+          exit 1
